@@ -1,0 +1,43 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build plugin
+      run: npm run build
+
+    - name: Create release package
+      run: |
+        mkdir -p release
+        cp -r dist/* release/
+        cp package.json release/
+        cp README.md release/
+        cp -r icon.png release/ 2>/dev/null || true
+        cd release
+        zip -r ../logseq-plugin-semantic-search-${{ github.ref_name }}.zip .
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: ./logseq-plugin-semantic-search-${{ github.ref_name }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
