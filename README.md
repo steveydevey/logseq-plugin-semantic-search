@@ -29,6 +29,8 @@ Open the search modal with any of:
 - **Alt+K** keyboard shortcut
 - Toolbar search icon
 
+![Semantic Search dialog](docs/dialog.png)
+
 Type a query and results appear ranked by similarity. Click a result to navigate to that block.
 
 The **Include journal** checkbox in the footer controls whether results from journal pages are shown.
