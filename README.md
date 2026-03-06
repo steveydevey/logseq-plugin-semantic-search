@@ -47,6 +47,18 @@ Click **Re-index** to rebuild the embedding index. By default, blocks are automa
 | Minimum Block Length | `10` | Skip blocks shorter than this (characters) |
 | Auto-index on Load | `true` | Automatically index when the graph loads |
 
+## Support
+
+This is a small utility built to reduce a bit of knowledge work friction
+in Logseq. If it saves you time and helps you find something you'd lost,
+you can drop a tip below. There is absolutely no pressure, but every coffee
+is hugely appreciated!
+
+<a href="https://www.buymeacoffee.com/twaugh" target="_blank"><img
+ src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png"
+ alt="Buy Me A Coffee"
+ style="height: 60px !important;width: 217px !important;" ></a>
+
 ## Development
 
 ```sh
