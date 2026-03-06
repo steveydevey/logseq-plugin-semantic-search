@@ -28,7 +28,6 @@ Open the search modal with any of:
 
 - **Alt+K** keyboard shortcut
 - Toolbar search icon
-- `/Semantic Search` slash command
 
 Type a query and results appear ranked by similarity. Click a result to navigate to that block.
 

@@ -29,11 +29,6 @@ async function main() {
     },
   });
 
-  // Register slash command
-  logseq.Editor.registerSlashCommand("Semantic Search", async () => {
-    showModal();
-  });
-
   // Register keyboard shortcut
   logseq.App.registerCommandShortcut(
     { binding: "alt+k" },
