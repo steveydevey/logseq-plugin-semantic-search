@@ -1,0 +1,266 @@
+import { debounce } from "./utils";
+import { embedTexts } from "./embeddings";
+import { getAllEmbeddings, getEmbeddingCount } from "./storage";
+import { searchEmbeddings, type SearchResult } from "./search";
+import { indexBlocks, indexingState } from "./indexer";
+import { getSettings } from "./settings";
+
+interface DisplayResult extends SearchResult {
+  pageName: string;
+  content: string;
+}
+
+let progressInterval: ReturnType<typeof setInterval> | undefined;
+
+export function createSearchModal(): void {
+  const app = document.getElementById("app");
+  if (!app) return;
+
+  app.innerHTML = `
+    <div class="semantic-search-overlay" id="ss-overlay">
+      <div class="semantic-search-modal" id="ss-modal">
+        <div class="ss-header">
+          <span class="ss-title">Semantic Search</span>
+          <button class="ss-close" id="ss-close">&times;</button>
+        </div>
+        <input type="text" class="ss-input" id="ss-input" placeholder="Search query..." autocomplete="off" />
+        <div class="ss-status" id="ss-status"></div>
+        <div class="ss-results" id="ss-results"></div>
+        <div class="ss-footer">
+          <button class="ss-reindex" id="ss-reindex">Re-index</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const input = document.getElementById("ss-input") as HTMLInputElement;
+  const closeBtn = document.getElementById("ss-close")!;
+  const reindexBtn = document.getElementById("ss-reindex")!;
+  const overlay = document.getElementById("ss-overlay")!;
+
+  const debouncedSearch = debounce(async (...args: unknown[]) => {
+    const query = args[0] as string;
+    await performSearch(query);
+  }, 300);
+
+  input.addEventListener("input", () => {
+    const query = input.value.trim();
+    if (query.length > 0) {
+      debouncedSearch(query);
+    } else {
+      clearResults();
+    }
+  });
+
+  closeBtn.addEventListener("click", hideModal);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) hideModal();
+  });
+
+  reindexBtn.addEventListener("click", () => {
+    startIndexing();
+  });
+
+  document.addEventListener("keydown", handleKeydown);
+
+  updateStatus();
+}
+
+function handleKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") {
+    hideModal();
+    return;
+  }
+
+  const results = document.getElementById("ss-results");
+  if (!results) return;
+
+  const items = results.querySelectorAll(".ss-result-item");
+  if (items.length === 0) return;
+
+  const active = results.querySelector(".ss-result-item.active");
+  let index = active ? Array.from(items).indexOf(active) : -1;
+
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    index = Math.min(index + 1, items.length - 1);
+    items.forEach((el) => el.classList.remove("active"));
+    items[index].classList.add("active");
+    items[index].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    index = Math.max(index - 1, 0);
+    items.forEach((el) => el.classList.remove("active"));
+    items[index].classList.add("active");
+    items[index].scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Enter" && active) {
+    e.preventDefault();
+    (active as HTMLElement).click();
+  }
+}
+
+function hideModal(): void {
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = undefined;
+  }
+  logseq.hideMainUI();
+}
+
+async function updateStatus(): Promise<void> {
+  const statusEl = document.getElementById("ss-status");
+  if (!statusEl) return;
+
+  if (indexingState.status === "indexing") {
+    const { done, total } = indexingState.progress;
+    statusEl.textContent = `Indexing... ${done}/${total}`;
+    return;
+  }
+
+  try {
+    const count = await getEmbeddingCount();
+    statusEl.textContent =
+      count > 0 ? `${count} blocks indexed` : "No blocks indexed. Click Re-index to start.";
+  } catch {
+    statusEl.textContent = "No blocks indexed. Click Re-index to start.";
+  }
+}
+
+function startStatusPolling(): void {
+  if (progressInterval) clearInterval(progressInterval);
+  progressInterval = setInterval(() => updateStatus(), 500);
+}
+
+async function performSearch(query: string): Promise<void> {
+  const resultsEl = document.getElementById("ss-results");
+  if (!resultsEl) return;
+
+  resultsEl.innerHTML = '<div class="ss-loading">Searching...</div>';
+
+  try {
+    const settings = getSettings();
+    const [queryEmbedding] = await embedTexts(
+      [query],
+      settings.apiEndpoint,
+      settings.embeddingModel,
+      settings.apiFormat,
+    );
+
+    const allEmbeddings = await getAllEmbeddings();
+    const results = searchEmbeddings(
+      queryEmbedding,
+      allEmbeddings,
+      settings.topK,
+    );
+
+    // Fetch block details
+    const displayResults: DisplayResult[] = [];
+    for (const result of results) {
+      try {
+        const block = await logseq.Editor.getBlock(result.blockId);
+        if (!block) continue;
+
+        let pageName = "Unknown";
+        if (block.page?.id) {
+          const page = await logseq.Editor.getPage(block.page.id);
+          pageName = page?.originalName ?? page?.name ?? "Unknown";
+        }
+
+        displayResults.push({
+          ...result,
+          pageName,
+          content: block.content ?? "",
+        });
+      } catch {
+        // Skip blocks we can't fetch
+      }
+    }
+
+    renderResults(displayResults);
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="ss-error">${(err as Error).message}</div>`;
+  }
+}
+
+function renderResults(results: DisplayResult[]): void {
+  const resultsEl = document.getElementById("ss-results");
+  if (!resultsEl) return;
+
+  if (results.length === 0) {
+    resultsEl.innerHTML = '<div class="ss-no-results">No results found</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = "";
+  for (const result of results) {
+    const item = document.createElement("div");
+    item.className = "ss-result-item";
+
+    const similarity = Math.round(result.similarity * 100);
+    const preview =
+      result.content.length > 150
+        ? result.content.slice(0, 150) + "..."
+        : result.content;
+
+    item.innerHTML = `
+      <div class="ss-result-header">
+        <span class="ss-similarity">${similarity}%</span>
+        <span class="ss-page-name">${escapeHtml(result.pageName)}</span>
+      </div>
+      <div class="ss-result-content">${escapeHtml(preview)}</div>
+    `;
+
+    item.addEventListener("click", async () => {
+      try {
+        const block = await logseq.Editor.getBlock(result.blockId);
+        if (block?.page?.id) {
+          const page = await logseq.Editor.getPage(block.page.id);
+          if (page?.name) {
+            logseq.Editor.scrollToBlockInPage(page.name, result.blockId);
+          }
+        }
+      } catch {
+        // ignore navigation errors
+      }
+      hideModal();
+    });
+
+    resultsEl.appendChild(item);
+  }
+}
+
+function clearResults(): void {
+  const resultsEl = document.getElementById("ss-results");
+  if (resultsEl) resultsEl.innerHTML = "";
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+export function showModal(): void {
+  logseq.showMainUI();
+  updateStatus();
+  startStatusPolling();
+  setTimeout(() => {
+    const input = document.getElementById("ss-input") as HTMLInputElement;
+    if (input) {
+      input.value = "";
+      input.focus();
+    }
+    clearResults();
+  }, 50);
+}
+
+function startIndexing(): void {
+  updateStatus();
+  startStatusPolling();
+  indexBlocks((done, total) => {
+    const statusEl = document.getElementById("ss-status");
+    if (statusEl) statusEl.textContent = `Indexing... ${done}/${total}`;
+  })
+    .then(() => updateStatus())
+    .catch(() => updateStatus());
+}
